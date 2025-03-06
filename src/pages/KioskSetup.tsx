@@ -2,7 +2,7 @@ import { Theme, Card, Text, Flex, Button } from '@radix-ui/themes';
 import { useKiosk } from '../hooks/useKiosk';
 
 export function KioskSetup() {
-  const { kioskData, isLoadingKiosk, createKiosk, installRentables } = useKiosk();
+  const { kioskData, isLoadingKiosk, createKiosk, installRentables, removeKiosk } = useKiosk();
 
 
   return (
@@ -19,7 +19,16 @@ export function KioskSetup() {
               <Text size="2">Kiosk ID: {kioskData.kioskId}</Text>
               
               {kioskData.hasRentablesExt ? (
-                <Text color="green">Rentables 확장이 이미 설치되어 있습니다.</Text>
+                <Flex direction="column" gap="2">
+                  <Text color="green">Rentables 확장이 이미 설치되어 있습니다.</Text>
+                  <Button 
+                    onClick={() => removeKiosk.mutate()} 
+                    disabled={removeKiosk.isPending}
+                    color="red"
+                  >
+                    {removeKiosk.isPending ? '제거 중...' : 'Rentables 확장 제거'}
+                  </Button>
+                </Flex>
               ) : (
                 <Button 
                   onClick={() => installRentables.mutate()} 

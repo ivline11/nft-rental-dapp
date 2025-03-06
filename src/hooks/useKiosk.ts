@@ -229,19 +229,41 @@ export function useKiosk() {
       queryClient.invalidateQueries({ queryKey: ['userKiosk', account?.address] });
     },
   });
-  
-  // Kiosk 리셋 (로컬 스토리지만 초기화)
-  const resetLocalKioskData = () => {
-    localStorage.removeItem('kioskId');
-    localStorage.removeItem('kioskCapId');
-    localStorage.removeItem('hasRentablesExt');
-    localStorage.removeItem('protectedTpId');
-    
-    // 데이터 새로고침
-    queryClient.invalidateQueries({ queryKey: ['userKiosk', account?.address] });
-    
-    return { status: "reset_success" };
-  };
+
+  // kiosk remove
+  const removeKiosk = useMutation({
+    mutationFn: async () => {
+      if (!account) throw new Error("지갑이 연결되지 않았습니다");
+      if (!kioskData) throw new Error("Kiosk가 생성되지 않았습니다");
+      
+      const tx = new Transaction();
+      
+      // Rentables 확장 제거 함수 호출
+      tx.moveCall({
+        target: `${PACKAGE_ID}::${MODULE_NAME}::remove`,
+        arguments: [
+          tx.object(kioskData.kioskId),
+          tx.object(kioskData.kioskCapId),
+        ],
+      });
+      
+      // 트랜잭션에 직접 가스 예산 설정
+      tx.setGasBudget(10000000);
+      
+      return signAndExecuteTransaction({
+        transaction: tx,
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['userKiosk', account?.address] });
+      alert("Rentables 확장이 성공적으로 제거되었습니다!");
+    },
+    onError: (error) => {
+      console.error("Rentables 확장 제거 중 오류 발생:", error);
+      alert("Rentables 확장 제거 중 오류가 발생했습니다. 확장 저장소가 비어 있는지 확인하세요.");
+    }
+  });
+
   
   return {
     kioskData,
@@ -249,7 +271,7 @@ export function useKiosk() {
     createKiosk,
     installRentables,
     setupRenting,
-    resetLocalKioskData,
     refetchKioskData,
+    removeKiosk
   };
 } 
