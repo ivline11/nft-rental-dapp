@@ -12,9 +12,11 @@ type NFTCardProps = {
   onRent?: () => void;
   onList?: () => void;
   onReturn?: () => void;
+  onClick?: () => void;
 };
 
 export function NFTCard({
+  id,
   name,
   description,
   imageUrl,
@@ -25,18 +27,36 @@ export function NFTCard({
   onRent,
   onList,
   onReturn,
+  onClick,
 }: NFTCardProps) {
   return (
     <Theme>
-      <Card style={{ maxWidth: 300 }}>
+      <Card style={{ maxWidth: 300, cursor: onClick ? 'pointer' : 'default' }} onClick={onClick}>
         <Flex direction="column" gap="2">
-          <Box style={{ height: 200, overflow: 'hidden' }}>
-            <img 
-              src={imageUrl} 
-              alt={name} 
-              style={{ width: '100%', height: '100%', objectFit: 'cover' }} 
-            />
-          </Box>
+          {imageUrl ? (
+            <Box style={{ height: 200, overflow: 'hidden' }}>
+              <img 
+                src={imageUrl} 
+                alt={name} 
+                style={{ width: '100%', height: '100%', objectFit: 'cover' }} 
+              />
+            </Box>
+          ) : (
+            <Box style={{ 
+              width: '100%', 
+              height: '200px', 
+              backgroundColor: '#f0f0f0',
+              borderRadius: '8px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '16px',
+              textAlign: 'center'
+            }}>
+              <Text size="5" weight="bold" color="cyan">{name}</Text>
+            </Box>
+          )}
+          
           <Text size="5" weight="bold">{name}</Text>
           <Text size="2" color="gray">{description}</Text>
           
@@ -55,11 +75,13 @@ export function NFTCard({
             </Flex>
           )}
           
-          {!isRentable && !isRented && (
+          {!isRentable && !isRented && onList && (
             <Button onClick={onList}>대여 등록하기</Button>
           )}
+          
+          <Text size="1" color="gray">ID: {id?.substring(0, 8)}...</Text>
         </Flex>
       </Card>
     </Theme>
   );
-} 
+}
