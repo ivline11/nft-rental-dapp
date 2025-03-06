@@ -2,6 +2,7 @@ import { useCurrentAccount, useSuiClient, useSignAndExecuteTransaction } from '@
 import { Transaction } from '@mysten/sui/transactions';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { PACKAGE_ID, MODULE_NAME } from '../constants';
+import { NFTData } from '../types/nftData';
 
 // 커스텀 반환 타입 정의
 type InstallResult = { status: string } | null;
@@ -230,7 +231,7 @@ export function useKiosk() {
     },
   });
 
-  // kiosk remove
+  // kiosk rental extension remove
   const removeKiosk = useMutation({
     mutationFn: async () => {
       if (!account) throw new Error("지갑이 연결되지 않았습니다");
@@ -264,6 +265,73 @@ export function useKiosk() {
     }
   });
 
+  // kiosk NFT 조회
+  const getKioskNFTs = useQuery({
+    queryKey: ['kioskNFTs', account?.address, kioskData?.kioskId],
+    queryFn: async (): Promise<NFTData[] | null> => {
+      if (!account || !kioskData?.kioskId) return null;
+      
+      try {
+        // 키오스크 객체의 다이나믹 필드 조회
+        const dynamicFields = await client.getDynamicFields({
+          parentId: kioskData.kioskId
+        });
+        
+        console.log("Kiosk dynamic fields:", dynamicFields);
+        
+        const nfts: NFTData[] = [];
+        
+        // 각 다이나믹 필드에 대해 처리
+        for (const field of dynamicFields.data) {
+          try {
+            // 필드 객체 조회
+            const fieldObj = await client.getDynamicFieldObject({
+              parentId: kioskData.kioskId,
+              name: field.name
+            });
+            
+            console.log("Field object:", fieldObj);
+            
+            // 필드가 객체 ID를 가지고 있는지 확인
+            if (fieldObj.data && fieldObj.data.content) {
+              const content = fieldObj.data.content as any;
+              
+              // NFT 타입 체크
+              if (content.type && content.type.includes('simple_nft::NFT')) {
+                console.log("Found NFT:", content);
+                
+                // content.fields에서 직접 데이터 추출
+                const nftData: NFTData = {
+                  id: content.fields.id.id || fieldObj.data.objectId,
+                  name: content.fields.name || '이름 없음',
+                  description: content.fields.description || '',
+                  type: content.type
+                };
+                
+                // url 필드가 NFTData에 추가되었다면 포함
+                if ('url' in content.fields) {
+                  (nftData as any).url = content.fields.url;
+                }
+                
+                nfts.push(nftData);
+                console.log("Added NFT:", nftData);
+              }
+            }
+          } catch (error) {
+            console.error(`Error processing field ${field.name}:`, error);
+          }
+        }
+        
+        console.log("Final NFTs list:", nfts);
+        return nfts;
+      } catch (error) {
+        console.error("Error fetching kiosk NFTs:", error);
+        return null;
+      }
+    },
+    enabled: !!account && !!kioskData?.kioskId,
+  });
+
   
   return {
     kioskData,
@@ -272,6 +340,7 @@ export function useKiosk() {
     installRentables,
     setupRenting,
     refetchKioskData,
-    removeKiosk
+    removeKiosk,
+    getKioskNFTs
   };
-} 
+}

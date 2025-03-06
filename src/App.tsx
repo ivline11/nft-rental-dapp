@@ -9,7 +9,6 @@ import { ListNFT } from './pages/ListNFT';
 import { RentNFT } from './pages/RentNFT';
 import { ReturnNFT } from './pages/ReturnNFT';
 import { KioskNFTs } from './pages/KioskNFTs';
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { useState } from 'react';
 import { NFTList } from './pages/NFTList';
 
