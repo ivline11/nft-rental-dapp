@@ -4,7 +4,6 @@ import { useKiosk } from '../hooks/useKiosk';
 export function KioskSetup() {
   const { kioskData, isLoadingKiosk, createKiosk, installRentables, removeKiosk } = useKiosk();
 
-
   return (
     <Theme>
       <Card>
@@ -21,17 +20,26 @@ export function KioskSetup() {
               {kioskData.hasRentablesExt ? (
                 <Flex direction="column" gap="2">
                   <Text color="green">Rentables 확장이 이미 설치되어 있습니다.</Text>
-                  <Button 
-                    onClick={() => removeKiosk.mutate()} 
-                    disabled={removeKiosk.isPending}
-                    color="red"
-                  >
-                    {removeKiosk.isPending ? '제거 중...' : 'Rentables 확장 제거'}
-                  </Button>
+                  <Flex gap="2">
+                    <Button 
+                      onClick={() => installRentables.mutate(true)} 
+                      disabled={installRentables.isPending}
+                      color="blue"
+                    >
+                      {installRentables.isPending ? '재설치 중...' : 'Rentables 확장 재설치'}
+                    </Button>
+                    <Button 
+                      onClick={() => removeKiosk.mutate()} 
+                      disabled={removeKiosk.isPending}
+                      color="red"
+                    >
+                      {removeKiosk.isPending ? '제거 중...' : 'Rentables 확장 제거'}
+                    </Button>
+                  </Flex>
                 </Flex>
               ) : (
                 <Button 
-                  onClick={() => installRentables.mutate()} 
+                  onClick={() => installRentables.mutate(false)} 
                   disabled={installRentables.isPending}
                 >
                   {installRentables.isPending ? '설치 중...' : 'Rentables 확장 설치'}

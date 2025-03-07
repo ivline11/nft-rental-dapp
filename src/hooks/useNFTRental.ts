@@ -1,13 +1,18 @@
 import { useCurrentAccount, useSuiClient, useSignAndExecuteTransaction } from '@mysten/dapp-kit';
 import { Transaction } from '@mysten/sui/transactions';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { PACKAGE_ID, MODULE_NAME, NFT_TYPE, CLOCK_ID } from '../constants';
+import { PACKAGE_ID, MODULE_NAME, NFT_TYPE, CLOCK_ID, PUBLISHER_ID, PROTECTED_TP_ID } from '../constants';
+import { useState } from 'react';
+import { useKiosk } from './useKiosk';  // useKiosk 훅 import
 
 export function useNFTRental() {
   const client = useSuiClient();
   const account = useCurrentAccount();
   const queryClient = useQueryClient();
   const { mutateAsync: signAndExecuteTransaction } = useSignAndExecuteTransaction();
+  const { kioskData } = useKiosk();  // kioskData 가져오기
+
+  const [shouldFetchProtectedTP, setShouldFetchProtectedTP] = useState(false);
   
   // 사용자의 NFT 조회
   const { data: userNFTs, isLoading: isLoadingUserNFTs } = useQuery({
@@ -23,39 +28,25 @@ export function useNFTRental() {
           options: { showContent: true, showDisplay: true },
         });
         
+        console.log("NFT 조회 결과:", nftObjects); // 디버깅용 로그 추가
+
         // NFT 객체 데이터 가공
         const processedNFTs = nftObjects.data.map(obj => {
+          console.log("Processing NFT object:", obj); // 디버깅용 로그 추가
+          
           const content = obj.data?.content;
+          console.log("NFT content:", content); // 디버깅용 로그 추가
           
           let nftName = "Unknown NFT";
           let nftDescription = "";
           
-          // content에서 정보 추출
-          if (content && typeof content === 'object' && 'fields' in content) {
-            const fields = content.fields as any; // 타입 단언으로 오류 방지
+          // content가 있고 fields 속성이 있는 경우
+          if (content && 'fields' in content) {
+            const fields = (content as any).fields;
             
-            // 타입 안전하게 필드 접근
-            if (fields) {
-              // fields가 객체인 경우
-              if (typeof fields === 'object') {
-                // fields가 배열인 경우 (MoveValue[])
-                if (Array.isArray(fields)) {
-                  // 배열에서 필드 찾기
-                  for (const field of fields) {
-                    if (field && typeof field === 'object' && 'key' in field && 'value' in field) {
-                      if (field.key === 'name') nftName = String(field.value);
-                      if (field.key === 'description') nftDescription = String(field.value);
-                    }
-                  }
-                } 
-                // fields가 객체인 경우
-                else {
-                  // 직접 속성 접근
-                  if ('name' in fields) nftName = String(fields.name);
-                  if ('description' in fields) nftDescription = String(fields.description);
-                }
-              }
-            }
+            // name과 description 필드 직접 접근
+            nftName = fields.name || "Unknown NFT";
+            nftDescription = fields.description || "";
           }
           
           const nft = {
@@ -65,9 +56,11 @@ export function useNFTRental() {
             description: nftDescription,
           };
           
+          console.log("Processed NFT:", nft); // 디버깅용 로그 추가
           return nft;
         });
         
+        console.log("Final processed NFTs:", processedNFTs); // 디버깅용 로그 추가
         return processedNFTs;
       } catch (error) {
         console.error("Error fetching user NFTs:", error);
@@ -79,21 +72,70 @@ export function useNFTRental() {
   
   // 대여 가능한 NFT 조회
   const { data: rentableNFTs, isLoading: isLoadingRentableNFTs } = useQuery({
-    queryKey: ['rentableNFTs'],
+    queryKey: ['rentableNFTs', kioskData?.kioskId],
     queryFn: async () => {
-      // 여기서는 간단하게 구현합니다. 실제로는 더 복잡한 쿼리가 필요할 수 있습니다.
-      const objects = await client.getOwnedObjects({
-        owner: "0x0", // 공유 객체
-        filter: { StructType: `${PACKAGE_ID}::${MODULE_NAME}::Rentable<${NFT_TYPE}>` },
-        options: { showContent: true },
-      });
-      
-      return objects.data.map(obj => ({
-        id: obj.data?.objectId,
-        type: obj.data?.type,
-        content: obj.data?.content,
-      }));
+      if (!kioskData?.kioskId) {
+        console.log("Kiosk가 설정되지 않았습니다.");
+        return [];
+      }
+
+      try {
+        console.log("Fetching rentable NFTs");
+        
+        // Kiosk의 Dynamic Fields 조회
+        const dynamicFields = await client.getDynamicFields({
+          parentId: kioskData.kioskId,
+        });
+        
+        console.log("Kiosk dynamic fields:", dynamicFields);
+        
+        const rentableDetails = await Promise.all(
+          dynamicFields.data.map(async (field) => {
+            const details = await client.getDynamicFieldObject({
+              parentId: kioskData.kioskId,
+              name: field.name
+            });
+            
+            console.log("Dynamic field details:", details);
+            
+            // Listed 타입의 Dynamic Field 찾기
+            const content = details.data?.content;
+            if (content?.dataType === 'moveObject' && 
+                content.type?.includes(`${PACKAGE_ID}::rentables_ext::Listed`)) {
+              
+              console.log("Found Listed Rentable:", content);
+              
+              // Rentable 객체의 필드 접근
+              const rentableFields = content.fields as {
+                nft: { id: string };
+                price_per_day: string | number;
+                duration: string | number;
+              };
+              
+              return {
+                id: details.data?.objectId,
+                type: content.type,
+                nftId: rentableFields.nft?.id,
+                pricePerDay: Number(rentableFields.price_per_day),
+                duration: Number(rentableFields.duration),
+                content: content
+              };
+            }
+            return null;
+          })
+        );
+        
+        console.log("Rentable details:", rentableDetails);
+        
+        return rentableDetails.filter(Boolean);
+        
+      } catch (error) {
+        console.error("Error fetching rentable NFTs:", error);
+        return [];
+      }
     },
+    enabled: !!kioskData?.kioskId,
+    refetchInterval: 5000,
   });
   
   // NFT 생성
@@ -109,7 +151,7 @@ export function useNFTRental() {
       const tx = new Transaction();
       
       try {
-        // NFT 생성 함수 호출 (빈 URL 전달)
+        // NFT 생성 함수 호출
         tx.moveCall({
           target: `${PACKAGE_ID}::simple_nft::create_nft`,
           arguments: [
@@ -151,75 +193,233 @@ export function useNFTRental() {
       alert(`NFT 생성 실패: ${errorMessage}`);
     }
   });
-  
-  // RentalPolicy 및 ProtectedTP 설정
-  const setupRenting = useMutation({
-    mutationFn: async ({ publisherId, royaltyBasisPoints }: { publisherId: string, royaltyBasisPoints: number }) => {
-      if (!account) throw new Error("지갑이 연결되지 않았습니다");
+
+  // Publisher 객체 생성 함수
+// const createPublisher = useMutation({
+//   mutationFn: async () => {
+//     if (!account) throw new Error("지갑이 연결되지 않았습니다");
+    
+//     try {
+//       console.log("Publisher 객체 생성 시작");
       
-      const tx = new Transaction();
+//       const publisherTx = new Transaction();
+//       publisherTx.moveCall({
+//         target: "0x2::package::claim",
+//         arguments: [
+//           publisherTx.pure.address(PACKAGE_ID),
+//           publisherTx.pure.address(OWNER_ID), // 배포자 주소
+//         ],
+//       });
       
-      // RentalPolicy 및 ProtectedTP 설정 함수 호출
+//       publisherTx.setGasBudget(10000000);
+      
+//       const publisherResult = await signAndExecuteTransaction({
+//         transaction: publisherTx,
+//       });
+      
+//       console.log("Publisher 생성 결과:", publisherResult);
+      
+//       // 전체 결과를 JSON 문자열로 로깅
+//       console.log("Publisher 생성 결과 (전체):", JSON.stringify(publisherResult, null, 2));
+      
+//       // 사용자에게 콘솔에서 결과를 확인하라고 안내
+//       alert("Publisher 객체가 생성되었습니다. 콘솔에서 결과를 확인하고 생성된 객체 ID를 찾아주세요.");
+      
+//       return "콘솔에서 객체 ID를 확인하세요";
+//     } catch (error) {
+//       console.error("Publisher 생성 오류:", error);
+//       throw error;
+//     }
+//   },
+//   onSuccess: (message) => {
+//     console.log("Publisher 객체 생성 성공:", message);
+//   },
+//   onError: (error) => {
+//     console.error("Publisher 생성 실패:", error);
+//     alert(`Publisher 생성 실패: ${error instanceof Error ? error.message : String(error)}`);
+//   }
+// });
+
+
+// 렌탈 정책 설정
+const setupRenting = useMutation({
+  mutationFn: async ({ royaltyBasisPoints }: { royaltyBasisPoints: number }) => {
+    if (!account) throw new Error("지갑이 연결되지 않았습니다");
+    
+    const tx = new Transaction();
+    
+    try {
+      console.log("Setting up renting with:", { publisherId: PUBLISHER_ID, royaltyBasisPoints });
+      
+      // setup_renting 함수 호출
       tx.moveCall({
         target: `${PACKAGE_ID}::${MODULE_NAME}::setup_renting`,
         arguments: [
-          tx.object(publisherId),
+          tx.object(PUBLISHER_ID),
           tx.pure.u64(royaltyBasisPoints),
         ],
         typeArguments: [NFT_TYPE],
       });
       
-      return signAndExecuteTransaction({
+      // 가스 예산 설정
+      tx.setGasBudget(10000000);
+      
+      const result = await signAndExecuteTransaction({
         transaction: tx,
       });
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['rentalPolicy'] });
-    },
-  });
+      
+      console.log("Setup renting transaction result:", result);
+      
+      // 트랜잭션 실행 후 ProtectedTP 객체 조회
+      const protectedTPs = await client.getOwnedObjects({
+        owner: PUBLISHER_ID,
+        filter: { StructType: `${PACKAGE_ID}::${MODULE_NAME}::ProtectedTP<${NFT_TYPE}>` },
+        options: { showContent: true },
+      });
+      
+      if (protectedTPs.data.length > 0) {
+        const protectedTPId = protectedTPs.data[0].data?.objectId;
+        if (protectedTPId) {
+          return { protectedTPId };
+        }
+      }
+      
+      return result;
+    } catch (error) {
+      console.error("Setup renting transaction error:", error);
+      throw error;
+    }
+  },
+  onSuccess: (data) => {
+    console.log("Setup renting successful:", data);
+    
+    // 생성된 ProtectedTP ID가 있으면 쿼리 캐시 직접 업데이트
+    if ('protectedTPId' in data) {
+      queryClient.setQueryData(['protectedTP'], {
+        id: data.protectedTPId,
+        type: `${PACKAGE_ID}::${MODULE_NAME}::ProtectedTP<${NFT_TYPE}>`
+      });
+    } else {
+      // 없으면 쿼리 무효화
+      queryClient.invalidateQueries({ queryKey: ['protectedTP'] });
+    }
+    
+    // ProtectedTP 객체 조회 활성화
+    setShouldFetchProtectedTP(true);
+    
+    alert("대여 시스템이 성공적으로 설정되었습니다!");
+  },
+  onError: (error) => {
+    console.error("대여 시스템 설정 실패:", error);
+    
+    let errorMessage = "알 수 없는 오류";
+    if (error instanceof Error) {
+      errorMessage = error.message;
+      
+      if (errorMessage.includes("User rejected")) {
+        errorMessage = "트랜잭션이 거부되었습니다. 지갑에서 트랜잭션을 승인해주세요.";
+      } else if (errorMessage.includes("insufficient gas")) {
+        errorMessage = "가스가 부족합니다. SUI 잔액을 확인해주세요.";
+      } else if (errorMessage.includes("authority")) {
+        errorMessage = "Publisher 권한이 없습니다. NFT 타입의 게시자만 이 기능을 사용할 수 있습니다.";
+      }
+    }
+    
+    alert(`대여 시스템 설정 실패: ${errorMessage}`);
+  }
+});
+  
+  // ProtectedTP 객체 조회
+const protectedTP = { id: PROTECTED_TP_ID };
+const isLoadingProtectedTP = false; // 항상 로딩 완료 상태
   
   // NFT 대여 등록하기
   const listNFTForRent = useMutation({
-    mutationFn: async ({ 
-      kioskId,
-      kioskCapId,
-      protectedTpId,
-      nftId, 
-      duration, 
-      pricePerDay 
-    }: { 
-      kioskId: string,
-      kioskCapId: string,
-      protectedTpId: string,
+    mutationFn: async ({ nftId, kioskId, kioskCapId, duration, pricePerDay }: { 
       nftId: string, 
+      kioskId: string, 
+      kioskCapId: string, 
       duration: number, 
       pricePerDay: number 
     }) => {
       if (!account) throw new Error("지갑이 연결되지 않았습니다");
       
-      const tx = new Transaction();
-      
-      // 대여 등록 함수 호출
-      tx.moveCall({
-        target: `${PACKAGE_ID}::${MODULE_NAME}::list`,
-        arguments: [
-          tx.object(kioskId),
-          tx.object(kioskCapId),
-          tx.object(protectedTpId),
-          tx.pure.id(nftId),
-          tx.pure.u64(duration),
-          tx.pure.u64(pricePerDay),
-        ],
-        typeArguments: [NFT_TYPE],
-      });
-      
-      return signAndExecuteTransaction({
-        transaction: tx,
-      });
+      try {
+        console.log("Listing NFT for rent:", { nftId, kioskId, kioskCapId, duration, pricePerDay });
+        
+        // ProtectedTP 객체 확인
+        if (!protectedTP || !protectedTP.id) {
+          throw new Error("ProtectedTP 객체가 없습니다. 먼저 '렌탈 정책 설정' 버튼을 클릭하여 설정해주세요.");
+        }
+        
+        const protectedTPId = protectedTP.id;
+        console.log("ProtectedTP 사용:", protectedTPId);
+        
+        // NFT 대여 등록
+        const listTx = new Transaction();
+        listTx.moveCall({
+          target: `${PACKAGE_ID}::${MODULE_NAME}::list`,
+          arguments: [
+            listTx.object(kioskId),
+            listTx.object(kioskCapId),
+            listTx.object(protectedTPId),
+            listTx.pure.id(nftId),
+            listTx.pure.u64(duration * 86400), // 일 단위를 초 단위로 변환
+            listTx.pure.u64(pricePerDay),
+          ],
+          typeArguments: [NFT_TYPE],
+        });
+        
+        listTx.setGasBudget(10000000);
+        
+        const listResult = await signAndExecuteTransaction({
+          transaction: listTx,
+        });
+        
+        console.log("List NFT transaction result:", listResult);
+        return listResult;
+      } catch (error) {
+        console.error("List NFT transaction error:", error);
+        throw error;
+      }
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['userNFTs', 'rentableNFTs'] });
+    onSuccess: (data) => {
+      console.log("NFT successfully listed for rent:", data);
+      queryClient.invalidateQueries({ queryKey: ['userNFTs', account?.address] });
+      queryClient.invalidateQueries({ queryKey: ['rentableNFTs'] });
+      queryClient.invalidateQueries({ queryKey: ['kioskNFTs', account?.address] });
+      alert("NFT가 성공적으로 대여 목록에 등록되었습니다!");
     },
+    onError: (error) => {
+      console.error("NFT 대여 등록 실패:", error);
+      
+      let errorMessage = "알 수 없는 오류";
+      if (error instanceof Error) {
+        errorMessage = error.message;
+        
+        if (errorMessage.includes("User rejected")) {
+          errorMessage = "트랜잭션이 거부되었습니다. 지갑에서 트랜잭션을 승인해주세요.";
+        } else if (errorMessage.includes("insufficient gas")) {
+          errorMessage = "가스가 부족합니다. SUI 잔액을 확인해주세요.";
+        } else if (errorMessage.includes("EExtensionNotInstalled")) {
+          errorMessage = "Kiosk에 Rentables 확장이 설치되지 않았습니다. 먼저 확장을 설치해주세요.";
+        } else if (errorMessage.includes("EObjectNotExist")) {
+          errorMessage = "NFT가 Kiosk에 존재하지 않습니다. 먼저 NFT를 Kiosk에 추가해주세요.";
+        } else if (errorMessage.includes("notExists")) {
+          errorMessage = "참조된 객체가 존재하지 않습니다. PUBLISHER_ID가 올바른지 확인해주세요.";
+        } else if (errorMessage.includes("InvalidUsageOfPureArg")) {
+          errorMessage = "인수 형식이 잘못되었습니다. 개발자에게 문의하세요.";
+        } else if (errorMessage.includes("CommandArgumentError")) {
+          errorMessage = "명령 인수 오류가 발생했습니다. 개발자에게 문의하세요.";
+        } else if (errorMessage.includes("budget")) {
+          errorMessage = "가스 예산 설정에 실패했습니다. 다시 시도해주세요.";
+        } else if (errorMessage.includes("ProtectedTP")) {
+          errorMessage = "ProtectedTP 객체가 없습니다. 먼저 '렌탈 정책 설정' 버튼을 클릭하여 설정해주세요.";
+        }
+      }
+      
+      alert(`NFT 대여 등록 실패: ${errorMessage}`);
+    }
   });
   
   // NFT 대여하기
@@ -373,6 +573,9 @@ export function useNFTRental() {
     }
   });
   
+  // console.log("useNFTRental - PACKAGE_ID:", PACKAGE_ID);
+  // console.log("useNFTRental - PUBLISHER_ID:", PUBLISHER_ID);
+  
   return {
     userNFTs,
     isLoadingUserNFTs,
@@ -384,5 +587,10 @@ export function useNFTRental() {
     rentNFT,
     returnNFT,
     addNFTToKiosk,
+    protectedTP,
+    isLoadingProtectedTP,
+    // createPublisher,
+    shouldFetchProtectedTP,
+    setShouldFetchProtectedTP,
   };
 }

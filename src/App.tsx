@@ -11,6 +11,8 @@ import { ReturnNFT } from './pages/ReturnNFT';
 import { KioskNFTs } from './pages/KioskNFTs';
 import { useState } from 'react';
 import { NFTList } from './pages/NFTList';
+import { SetPublisher } from './pages/SetPublisher';
+import { SetRentalPolicy } from './pages/SetRentalPolicy';
 
 // 네트워크 설정
 const networks = {
@@ -39,24 +41,28 @@ function App() {
                 
                 <Tabs.Root value={activeTab} onValueChange={setActiveTab}>
                   <Tabs.List>
+                    <Tabs.Trigger value="kiosk">Kiosk 설정</Tabs.Trigger>
+                    {/* <Tabs.Trigger value="setPublisher">Publisher 설정</Tabs.Trigger> */}
+                    <Tabs.Trigger value="setRentalPolicy">렌탈 정책 설정</Tabs.Trigger>
+                    <Tabs.Trigger value="create">NFT 생성</Tabs.Trigger>
                     <Tabs.Trigger value="home">내 NFT</Tabs.Trigger>
                     <Tabs.Trigger value="nftlist">NFT 목록</Tabs.Trigger>
-                    <Tabs.Trigger value="create">NFT 생성</Tabs.Trigger>
-                    <Tabs.Trigger value="kiosk">Kiosk 설정</Tabs.Trigger>
                     <Tabs.Trigger value="list">NFT 대여 등록</Tabs.Trigger>
                     <Tabs.Trigger value="rent">NFT 대여</Tabs.Trigger>
-                    <Tabs.Trigger value="return">NFT 반환</Tabs.Trigger>
+                    {/* <Tabs.Trigger value="return">NFT 반환</Tabs.Trigger> */}
                     <Tabs.Trigger value="kioskNFTs">Kiosk NFT</Tabs.Trigger>
                   </Tabs.List>
                   
                   <Box py="4">
+                    {activeTab === 'kiosk' && <KioskSetup />}
+                    {/* {activeTab === 'setPublisher' && <SetPublisher />} */}
+                    {activeTab === 'setRentalPolicy' && <SetRentalPolicy />}
+                    {activeTab === 'create' && <CreateNFT />}
                     {activeTab === 'home' && <Home />}
                     {activeTab === 'nftlist' && <NFTList />}
-                    {activeTab === 'create' && <CreateNFT />}
-                    {activeTab === 'kiosk' && <KioskSetup />}
                     {activeTab === 'list' && <ListNFT />}
                     {activeTab === 'rent' && <RentNFT />}
-                    {activeTab === 'return' && <ReturnNFT />}
+                    {/* {activeTab === 'return' && <ReturnNFT />} */}
                     {activeTab === 'kioskNFTs' && <KioskNFTs />}
                   </Box>
                 </Tabs.Root>

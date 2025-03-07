@@ -1,28 +1,166 @@
 import { useState, useEffect } from 'react';
-import { Theme, Card, Text, Flex, Button, Select, TextField, Grid } from '@radix-ui/themes';
-import { useNFTRental } from '../hooks/useNFTRental';
+import { Theme, Card, Text, Flex, Button, Select, TextField } from '@radix-ui/themes';
 import { useKiosk } from '../hooks/useKiosk';
 import { useSuiClient } from '@mysten/dapp-kit';
-
-// NFT 타입 정의
-interface KioskNFTData {
-  id: string;
-  name: string;
-  description: string;
-}
+import { NFTData } from '../types/nftData';
+import { useSignAndExecuteTransaction } from '@mysten/dapp-kit';
+import { Transaction } from '@mysten/sui/transactions';
+import { NFT_TYPE, PROTECTED_TP_ID, MODULE_NAME, PACKAGE_ID } from '../constants';
 
 export function ListNFT() {
-  const { listNFTForRent } = useNFTRental();
-  const { kioskData } = useKiosk();
+  const { kioskData, installRentables } = useKiosk();
   const client = useSuiClient();
+  const { mutate: signAndExecuteTransaction } = useSignAndExecuteTransaction();
   
-  const [kioskNFTs, setKioskNFTs] = useState<KioskNFTData[]>([]);
+  const [kioskNFTs, setKioskNFTs] = useState<NFTData[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [selectedNFT, setSelectedNFT] = useState<string>('');
   const [duration, setDuration] = useState<string>('1');
   const [pricePerDay, setPricePerDay] = useState<string>('1000');
-  const [protectedTpId, setProtectedTpId] = useState<string>('');
   const [debugInfo, setDebugInfo] = useState<string>('');
+
+
+  // NFT 대여 목록에 올리는 함수
+  const handleListForRent = async () => {
+    if (!PROTECTED_TP_ID) {
+      alert("Protected Transfer Policy가 설정되지 않았습니다.");
+      return;
+    }
+
+    // Protected TP 존재 여부 확인
+    try {
+      const tpObj = await client.getObject({
+        id: PROTECTED_TP_ID,
+        options: { showContent: true }
+      });
+      console.log("Protected TP 객체:", tpObj);
+      
+      if (!tpObj.data) {
+        alert("Protected Transfer Policy를 찾을 수 없습니다.");
+        return;
+      }
+    } catch (error) {
+      console.error("Protected TP 확인 실패:", error);
+      alert("Protected Transfer Policy 확인에 실패했습니다.");
+      return;
+    }
+
+    // Rentables 확장 설치 확인
+    if (!kioskData?.hasRentablesExt) {
+      alert("Kiosk에 Rentables 확장이 설치되어 있지 않습니다. 먼저 설치해주세요.");
+      return;
+    }
+
+    // NFT가 Kiosk에 있는지 확인
+    try {
+      const kioskObj = await client.getObject({
+        id: kioskData.kioskId,
+        options: { showContent: true }
+      });
+      console.log("Kiosk 객체:", kioskObj);
+      
+      // Kiosk 내용 확인을 위한 디버그 정보
+      setDebugInfo(prev => prev + `\n\nKiosk 객체 상태:
+      ${JSON.stringify(kioskObj.data, null, 2)}`);
+
+      // 여기에 NFT 존재 여부 확인 로직 추가
+    } catch (error) {
+      console.error("Kiosk 확인 실패:", error);
+      alert("Kiosk 상태 확인에 실패했습니다.");
+      return;
+    }
+
+    if (!selectedNFT || !kioskData) {
+      alert("NFT, Kiosk 정보 및 Protected Transfer Policy가 필요합니다.");
+      return;
+    }
+    
+    const durationNum = parseInt(duration);
+    // 소수점 처리를 위해 parseFloat 사용
+    const priceNum = parseFloat(pricePerDay);
+    
+    if (isNaN(durationNum) || isNaN(priceNum)) {
+      alert("유효한 기간과 가격을 입력하세요.");
+      return;
+    }
+
+    if (durationNum <= 0) {
+      alert("대여 기간은 1일 이상이어야 합니다.");
+      return;
+    }
+
+    if (priceNum <= 0) {
+      alert("대여 가격은 0 SUI보다 커야 합니다.");
+      return;
+    }
+    
+    // SUI를 MIST로 변환 (1 SUI = 1,000,000,000 MIST)
+    const priceInMist = Math.floor(priceNum * 1000000000);
+    
+    // 디버깅 정보 추가
+    console.log("NFT 대여 등록 시작");
+    console.log("NFT ID:", selectedNFT);
+    console.log("Kiosk ID:", kioskData.kioskId);
+    console.log("Kiosk Cap ID:", kioskData.kioskCapId);
+    console.log("Protected TP ID:", PROTECTED_TP_ID);
+    console.log("대여 기간:", durationNum);
+    console.log("일일 대여 가격:", priceNum, "SUI (", priceInMist, "MIST)");
+    
+    setDebugInfo(prev => prev + `\n\nNFT 대여 등록 시작:
+- NFT ID: ${selectedNFT.substring(0, 8)}...
+- Kiosk ID: ${kioskData.kioskId.substring(0, 8)}...
+- Kiosk Cap ID: ${kioskData.kioskCapId.substring(0, 8)}...
+- Protected TP ID: ${PROTECTED_TP_ID.substring(0, 8)}...
+- 대여 기간: ${durationNum}일
+- 일일 대여 가격: ${priceNum} SUI (${priceInMist} MIST)`);
+    
+    try {
+      const tx = new Transaction();
+      
+      tx.moveCall({
+        target: `${PACKAGE_ID}::${MODULE_NAME}::list`,
+        arguments: [
+          tx.object(kioskData.kioskId),
+          tx.object(kioskData.kioskCapId),
+          tx.object(PROTECTED_TP_ID),
+          tx.pure.id(selectedNFT),
+          tx.pure.u64(durationNum),
+          tx.pure.u64(priceInMist),  // MIST 단위로 변환된 가격 사용
+        ],
+        typeArguments: [NFT_TYPE],
+      });
+      
+      tx.setGasBudget(10000000);
+      
+      // 디버그 정보 추가
+      console.log("트랜잭션 내용:", tx);
+      setDebugInfo(prev => prev + `\n\n트랜잭션 내용: ${JSON.stringify(tx, null, 2)}`);
+      
+      const result = await signAndExecuteTransaction({
+        transaction: tx,
+      });
+      
+      console.log("NFT 대여 등록 결과:", result);
+      
+      if (result === undefined) {
+        console.log("트랜잭션이 실행되었지만 결과가 반환되지 않았습니다.");
+        setDebugInfo(prev => prev + `\n\n트랜잭션이 실행되었지만 결과가 반환되지 않았습니다. 트랜잭션 탐색기에서 확인해보세요.`);
+        alert("트랜잭션이 제출되었습니다. 결과는 트랜잭션 탐색기에서 확인하세요.");
+        return;
+      }
+      
+      setDebugInfo(prev => prev + `\n\nNFT 대여 등록 성공!
+결과: ${JSON.stringify(result, null, 2)}`);
+      
+      alert("NFT 대여 등록이 완료되었습니다!");
+    } catch (error) {
+      console.error("NFT 대여 등록 오류:", error);
+      setDebugInfo(prev => prev + `\n\nNFT 대여 등록 오류:
+${error instanceof Error ? error.message : String(error)}`);
+      
+      alert(`NFT 대여 등록 중 오류가 발생했습니다: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
   
   // Kiosk NFT 목록 가져오기
   useEffect(() => {
@@ -49,32 +187,15 @@ export function ListNFT() {
         setDebugInfo(`다이나믹 필드 ${dynamicFields.data.length}개 발견`);
         
         // NFT 객체 정보 가져오기
-        const nfts: KioskNFTData[] = [];
+        const nfts: NFTData[] = [];
         
-        // Protected Transfer Policy ID 찾기
-        let tpId = '';
-        for (const field of dynamicFields.data) {
-          if (field.name.type?.includes('::transfer_policy::') || 
-              field.name.type?.includes('TransferPolicy') || 
-              field.name.type?.includes('transfer_policy')) {
-            
-            console.log("Transfer Policy 필드 발견:", field);
-            
-            const fieldObj = await client.getDynamicFieldObject({
-              parentId: kioskData.kioskId,
-              name: field.name
-            });
-            
-            console.log("Transfer Policy 객체:", fieldObj.data);
-            
-            tpId = fieldObj.data?.objectId || '';
-            if (tpId) {
-              setProtectedTpId(tpId);
-              console.log("Found Protected Transfer Policy ID:", tpId);
-              setDebugInfo(prev => prev + `\nTransfer Policy ID 발견: ${tpId.substring(0, 8)}...`);
-              break;
-            }
-          }
+        // ProtectedTP 정보 로깅
+        if (PROTECTED_TP_ID) {
+          console.log("ProtectedTP 정보:", PROTECTED_TP_ID);
+          setDebugInfo(prev => prev + `\nProtectedTP ID 발견: ${PROTECTED_TP_ID.substring(0, 8)}...`);
+        } else {
+          console.log("ProtectedTP 정보 없음");
+          setDebugInfo(prev => prev + `\nProtectedTP 정보를 찾을 수 없습니다.`);
         }
         
         // 모든 다이나믹 필드 로깅 (디버깅용)
@@ -86,13 +207,8 @@ export function ListNFT() {
           setDebugInfo(prev => prev + `\n- ${fieldType}`);
         }
         
-        // Transfer Policy를 찾지 못한 경우 수동으로 입력할 수 있는 UI 추가
-        if (!tpId) {
-          setDebugInfo(prev => prev + `\nTransfer Policy ID를 찾지 못했습니다. 수동으로 입력해주세요.`);
-        }
-        
         // NFT 객체 정보 조회
-        let nftCount = dynamicFields.data.length;
+        let nftCount = 0;
         for (const field of dynamicFields.data) {
           try {
             // 필드 값 조회
@@ -143,7 +259,7 @@ export function ListNFT() {
               
               // NFT 데이터 추출
               const nftContent = nftObj.data?.content;
-              const nftData: KioskNFTData = {
+              const nftData: NFTData = {
                 id: nftId,
                 name: "Unknown NFT",
                 description: "",
@@ -197,7 +313,7 @@ export function ListNFT() {
         setDebugInfo(prev => prev + `\n총 ${nfts.length}개의 NFT를 찾았습니다.`);
         
         if (nfts.length > 0) {
-          setSelectedNFT(nfts[0].id);
+          setSelectedNFT(nfts[0].id || '');
         }
         
         setIsLoading(false);
@@ -209,68 +325,8 @@ export function ListNFT() {
     };
     
     fetchKioskNFTs();
-  }, [client, kioskData]);
+  }, [client, kioskData, PROTECTED_TP_ID]);
   
-  const handleListForRent = async () => {
-    if (!selectedNFT || !kioskData) {
-      alert("NFT와 Kiosk 정보가 필요합니다.");
-      return;
-    }
-    
-    const durationNum = parseInt(duration);
-    const priceNum = parseInt(pricePerDay);
-    
-    if (isNaN(durationNum) || isNaN(priceNum)) {
-      alert("유효한 기간과 가격을 입력하세요.");
-      return;
-    }
-    
-    if (!protectedTpId) {
-      alert("Protected Transfer Policy ID를 찾을 수 없습니다. Kiosk 설정을 확인해주세요.");
-      return;
-    }
-    
-    // 디버깅 정보 추가
-    console.log("NFT 대여 등록 시작");
-    console.log("NFT ID:", selectedNFT);
-    console.log("Kiosk ID:", kioskData.kioskId);
-    console.log("Kiosk Cap ID:", kioskData.kioskCapId);
-    console.log("대여 기간:", durationNum);
-    console.log("일일 가격:", priceNum);
-    console.log("Protected TP ID:", protectedTpId);
-    
-    setDebugInfo(prev => prev + `\n\nNFT 대여 등록 시작:
-- NFT ID: ${selectedNFT.substring(0, 8)}...
-- Kiosk ID: ${kioskData.kioskId.substring(0, 8)}...
-- Kiosk Cap ID: ${kioskData.kioskCapId.substring(0, 8)}...
-- 대여 기간: ${durationNum}일
-- 일일 가격: ${priceNum} SUI
-- Protected TP ID: ${protectedTpId.substring(0, 8)}...`);
-    
-    try {
-      // mutateAsync를 사용하여 Promise 반환 받기
-      const result = await listNFTForRent.mutateAsync({
-        nftId: selectedNFT,
-        kioskId: kioskData.kioskId,
-        kioskCapId: kioskData.kioskCapId,
-        duration: durationNum,
-        pricePerDay: priceNum,
-        protectedTpId: protectedTpId,
-      });
-      
-      console.log("NFT 대여 등록 결과:", result);
-      setDebugInfo(prev => prev + `\n\nNFT 대여 등록 성공!
-결과: ${JSON.stringify(result, null, 2)}`);
-      
-      alert("NFT 대여 등록이 완료되었습니다!");
-    } catch (error) {
-      console.error("NFT 대여 등록 오류:", error);
-      setDebugInfo(prev => prev + `\n\nNFT 대여 등록 오류:
-${error instanceof Error ? error.message : String(error)}`);
-      
-      alert(`NFT 대여 등록 중 오류가 발생했습니다: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  };
   
   return (
     <Theme>
@@ -279,7 +335,7 @@ ${error instanceof Error ? error.message : String(error)}`);
           <Text size="5" weight="bold">NFT 대여 등록</Text>
           
           {isLoading ? (
-            <Text>Kiosk NFT 정보 로딩 중...</Text>
+            <Text>데이터 로딩 중...</Text>
           ) : !kioskData ? (
             <Flex direction="column" gap="3" align="center" style={{ padding: '20px' }}>
               <Text>Kiosk가 설정되지 않았습니다. 먼저 Kiosk를 설정해주세요.</Text>
@@ -303,98 +359,50 @@ ${error instanceof Error ? error.message : String(error)}`);
           ) : (
             <>
               <Text size="3" weight="bold">대여할 NFT 선택</Text>
-              
-              <Grid columns="3" gap="3">
-                {kioskNFTs.map((nft) => (
-                  <Card 
-                    key={nft.id}
-                    style={{ 
-                      cursor: 'pointer',
-                      border: selectedNFT === nft.id ? '2px solid blue' : '1px solid #ccc'
-                    }}
-                    onClick={() => setSelectedNFT(nft.id)}
-                  >
-                    <Flex direction="column" gap="2">
-                      {/* 이미지 대신 NFT 정보 카드 표시 */}
-                      <div style={{ 
-                        width: '100%', 
-                        height: '120px', 
-                        backgroundColor: '#f5f5f5',
-                        borderRadius: '8px',
-                        padding: '16px',
-                        display: 'flex',
-                        flexDirection: 'column',
-                        justifyContent: 'center'
-                      }}>
-                        <Text size="3" weight="bold" style={{ marginBottom: '8px' }}>
-                          {nft.name || "이름 없음"}
-                        </Text>
-                        <Text size="2" style={{ color: '#666', flex: 1, overflow: 'hidden' }}>
-                          {nft.description || "설명 없음"}
-                        </Text>
-                        <Text size="1" style={{ color: '#999', marginTop: '8px' }}>
-                          ID: {nft.id.substring(0, 10)}...
-                        </Text>
-                      </div>
-                    </Flex>
-                  </Card>
-                ))}
-              </Grid>
+              <Select.Root value={selectedNFT} onValueChange={setSelectedNFT}>
+                <Select.Trigger />
+                <Select.Content>
+                  {kioskNFTs.map((nft) => (
+                    <Select.Item key={nft.id} value={nft.id || ''}>
+                      {nft.name || `NFT (${nft.id?.substring(0, 8) || '...'})`}
+                    </Select.Item>
+                  ))}
+                </Select.Content>
+              </Select.Root>
               
               <Flex direction="column" gap="2">
                 <Text size="3" weight="bold">대여 기간 설정 (일)</Text>
-                <Select.Root value={duration} onValueChange={setDuration}>
-                  <Select.Trigger />
-                  <Select.Content>
-                    <Select.Item value="1">1일</Select.Item>
-                    <Select.Item value="3">3일</Select.Item>
-                    <Select.Item value="7">7일</Select.Item>
-                    <Select.Item value="30">30일</Select.Item>
-                  </Select.Content>
-                </Select.Root>
+                <TextField.Root
+                  type="number"
+                  value={duration}
+                  onChange={(e) => setDuration(e.target.value)}
+                  placeholder="대여 기간을 입력하세요"
+                />
               </Flex>
               
               <Flex direction="column" gap="2">
-                <Text size="3" weight="bold">일일 대여 가격 설정 (SUI)</Text>
+                <Text size="3" weight="bold">일일 대여 가격 (SUI)</Text>
                 <TextField.Root
                   type="number"
                   value={pricePerDay}
                   onChange={(e) => setPricePerDay(e.target.value)}
-                  placeholder="일일 대여 가격을 입력하세요"
+                  min="0.000000001"  // 최소 1 MIST
+                  step="0.1"         // 0.1 SUI 단위로 조절 가능
+                  placeholder="예: 0.1"
                 />
               </Flex>
               
-              {!protectedTpId && (
-                <Flex direction="column" gap="2">
-                  <Text size="3" weight="bold">Protected Transfer Policy ID 수동 입력</Text>
-                  <Text size="2">Transfer Policy ID를 찾지 못했습니다. 수동으로 입력해주세요.</Text>
-                  <TextField.Root
-                    value={protectedTpId}
-                    onChange={(e) => setProtectedTpId(e.target.value)}
-                    placeholder="Protected Transfer Policy ID 입력"
-                  />
-                </Flex>
-              )}
-              
-              {protectedTpId ? (
+              {/* NFT 대여 등록 버튼 */}
+              <Flex direction="column" gap="2">
                 <Button 
                   onClick={handleListForRent}
-                  disabled={listNFTForRent.isPending || !selectedNFT}
+                  disabled={!selectedNFT}
                   color="blue"
                 >
-                  {listNFTForRent.isPending ? '처리 중...' : 'NFT 대여 등록하기'}
+                  NFT 대여 등록하기
                 </Button>
-              ) : (
-                <Flex direction="column" gap="2" align="center">
-                  <Text color="red">Protected Transfer Policy ID를 찾을 수 없습니다.</Text>
-                  <Button 
-                    onClick={() => document.querySelector('[value="kiosk"]')?.dispatchEvent(new MouseEvent('click'))}
-                    color="red"
-                  >
-                    Kiosk 설정 확인하기
-                  </Button>
-                </Flex>
-              )}
+              </Flex>
+              
             </>
           )}
         </Flex>

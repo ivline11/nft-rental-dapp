@@ -1,7 +1,7 @@
 import { useCurrentAccount, useSuiClient, useSignAndExecuteTransaction } from '@mysten/dapp-kit';
 import { Transaction } from '@mysten/sui/transactions';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { PACKAGE_ID, MODULE_NAME } from '../constants';
+import { PACKAGE_ID, MODULE_NAME, NFT_TYPE } from '../constants';
 import { NFTData } from '../types/nftData';
 
 // 커스텀 반환 타입 정의
@@ -152,12 +152,12 @@ export function useKiosk() {
   
   // Rentables 확장 설치
   const installRentables = useMutation({
-    mutationFn: async (): Promise<InstallResult | any> => {
+    mutationFn: async (isReinstall: boolean = false): Promise<InstallResult | any> => {
       if (!account) throw new Error("지갑이 연결되지 않았습니다");
       if (!kioskData) throw new Error("Kiosk가 생성되지 않았습니다");
       
-      // 이미 설치되어 있는지 확인
-      if (kioskData.hasRentablesExt) {
+      // 재설치가 아닐 때만 체크
+      if (!isReinstall && kioskData.hasRentablesExt) {
         console.log("Rentables 확장이 이미 설치되어 있습니다.");
         return { status: "already_installed" };
       }
@@ -173,20 +173,19 @@ export function useKiosk() {
         ],
       });
       
-      // 트랜잭션에 직접 가스 예산 설정
       tx.setGasBudget(10000000);
       
       return signAndExecuteTransaction({
         transaction: tx,
       });
     },
-    onSuccess: (data) => {
-      // 타입 가드를 사용하여 안전하게 접근
+    onSuccess: async (data) => {
       if (data && typeof data === 'object' && 'status' in data && data.status === "already_installed") {
         alert("Rentables 확장이 이미 설치되어 있습니다.");
       } else {
         alert("Rentables 확장이 성공적으로 설치되었습니다!");
       }
+      await refetchKioskData();
       queryClient.invalidateQueries({ queryKey: ['userKiosk', account?.address] });
     },
   });
@@ -234,34 +233,52 @@ export function useKiosk() {
   // kiosk rental extension remove
   const removeKiosk = useMutation({
     mutationFn: async () => {
-      if (!account) throw new Error("지갑이 연결되지 않았습니다");
       if (!kioskData) throw new Error("Kiosk가 생성되지 않았습니다");
-      
-      const tx = new Transaction();
-      
-      // Rentables 확장 제거 함수 호출
-      tx.moveCall({
-        target: `${PACKAGE_ID}::${MODULE_NAME}::remove`,
-        arguments: [
-          tx.object(kioskData.kioskId),
-          tx.object(kioskData.kioskCapId),
-        ],
-      });
-      
-      // 트랜잭션에 직접 가스 예산 설정
-      tx.setGasBudget(10000000);
-      
-      return signAndExecuteTransaction({
-        transaction: tx,
-      });
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['userKiosk', account?.address] });
-      alert("Rentables 확장이 성공적으로 제거되었습니다!");
-    },
-    onError: (error) => {
-      console.error("Rentables 확장 제거 중 오류 발생:", error);
-      alert("Rentables 확장 제거 중 오류가 발생했습니다. 확장 저장소가 비어 있는지 확인하세요.");
+      if (!account?.address) throw new Error("지갑이 연결되지 않았습니다");
+
+      try {
+        // extension storage 확인
+        const fields = await client.getDynamicFields({
+          parentId: kioskData.kioskId,
+        });
+        
+        console.log("Extension fields:", fields);
+        
+        if (fields.data.length > 0) {
+          throw new Error(`Extension storage가 비어있지 않습니다. 
+먼저 모든 NFT를 회수하거나 제거해주세요.
+현재 storage 항목 수: ${fields.data.length}`);
+        }
+
+        const tx = new Transaction();
+        
+        // extension 제거
+        tx.moveCall({
+          target: `${PACKAGE_ID}::${MODULE_NAME}::remove`,
+          arguments: [
+            tx.object(kioskData.kioskId),
+            tx.object(kioskData.kioskCapId),
+          ],
+          typeArguments: [],
+        });
+        
+        tx.setGasBudget(2000000);
+
+        const result = await signAndExecuteTransaction({
+          transaction: tx,
+        });
+
+        console.log("Extension 제거 결과:", result);
+        return result;
+      } catch (error) {
+        console.error("Extension 제거 실패:", error);
+        console.error("Error details:", {
+          name: (error as Error).name,
+          message: (error as Error).message,
+          stack: (error as Error).stack
+        });
+        throw error;
+      }
     }
   });
 
@@ -332,6 +349,44 @@ export function useKiosk() {
     enabled: !!account && !!kioskData?.kioskId,
   });
 
+  const removeNFT = useMutation({
+    mutationFn: async (nftId: string) => {
+      if (!kioskData?.kioskId || !kioskData?.kioskCapId || !account?.address) {
+        throw new Error('Kiosk 정보가 없습니다.');
+      }
+
+      const tx = new Transaction();
+      
+      // NFT를 키오스크에서 제거하고 반환값을 변수에 저장
+      const [nft] = tx.moveCall({
+        target: '0x2::kiosk::take',
+        arguments: [
+          tx.object(kioskData.kioskId),    // kiosk
+          tx.object(kioskData.kioskCapId), // cap
+          tx.pure.id(nftId),               // id
+        ],
+        typeArguments: [NFT_TYPE],
+      });
+
+      // 제거한 NFT를 사용자의 지갑으로 전송
+      tx.transferObjects(
+        [nft],
+        tx.pure.address(account.address)
+      );
+      
+      tx.setGasBudget(10000000);
+
+      const result = await signAndExecuteTransaction({
+        transaction: tx,
+      });
+
+      // NFT 목록 갱신
+      await getKioskNFTs.refetch();
+      
+      return result;
+    }
+  });
+
   
   return {
     kioskData,
@@ -341,6 +396,7 @@ export function useKiosk() {
     setupRenting,
     refetchKioskData,
     removeKiosk,
-    getKioskNFTs
+    getKioskNFTs,
+    removeNFT
   };
 }

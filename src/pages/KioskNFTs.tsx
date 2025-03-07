@@ -45,6 +45,22 @@ export function KioskNFTs() {
 
 // NFT 카드 컴포넌트
 function NFTCard({ nft }: { nft: NFTData }) {
+  const { removeNFT } = useKiosk();
+  
+  const handleRemove = async () => {
+    if (!window.confirm(`정말로 "${nft.name}" NFT를 제거하시겠습니까?`)) {
+      return;
+    }
+    
+    try {
+      await removeNFT.mutateAsync(nft.id || '');
+      alert('NFT가 성공적으로 제거되었습니다.');
+    } catch (error) {
+      console.error('NFT 제거 실패:', error);
+      alert('NFT 제거에 실패했습니다: ' + (error instanceof Error ? error.message : String(error)));
+    }
+  };
+
   return (
     <Card>
       <Flex direction="column" gap="2">
@@ -57,9 +73,24 @@ function NFTCard({ nft }: { nft: NFTData }) {
           alignItems: 'center',
           justifyContent: 'center',
           padding: '16px',
-          textAlign: 'center'
+          textAlign: 'center',
+          position: 'relative'
         }}>
           <Text size="5" weight="bold" color="cyan">{nft.name}</Text>
+          <Button 
+            color="red" 
+            variant="soft"
+            size="1"
+            onClick={handleRemove}
+            disabled={removeNFT.isPending}
+            style={{
+              position: 'absolute',
+              top: '8px',
+              right: '8px'
+            }}
+          >
+            {removeNFT.isPending ? '제거 중...' : '제거'}
+          </Button>
         </Box>
         <Text size="4" weight="bold">{nft.name}</Text>
         {nft.description && <Text size="2">{nft.description}</Text>}

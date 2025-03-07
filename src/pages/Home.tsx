@@ -22,7 +22,6 @@ export function Home() {
                   name={nft.name || '이름 없음'}
                   description={nft.description || ''}
                   imageUrl={''}
-                  // type={nft.type}
                 />
               ))}
             </Grid>
