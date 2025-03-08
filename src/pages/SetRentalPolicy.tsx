@@ -155,6 +155,16 @@ export function SetRentalPolicy() {
               <Callout.Text>
                 렌탈 정책이 이미 설정되어 있습니다. 다시 설정할 필요가 없습니다.
               </Callout.Text>
+              <Button
+                onClick={() => {
+                  // 렌탈 정책 재설정 함수 호출
+                  handleSetupRenting();
+                }}
+                color="blue"
+                size="3"  
+              >
+                렌탈 정책 재설정
+              </Button>
             </Callout.Root>
           ) : (
             <>
