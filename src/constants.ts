@@ -2,7 +2,7 @@ export const PACKAGE_ID = "";
 export const MODULE_NAME = "rentables_ext";
 export const NFT_MODULE_NAME = "simple_nft";
 export const NFT_TYPE = `${PACKAGE_ID}::simple_nft::NFT`;
-export const OWNER_ID = "0x12a61583825348beed75df14e2eaa86b9233ac4a64aa8c980710c892d56e088f";
+export const OWNER_ID = "";
 export const PUBLISHER_ID = ""; // 패키지 배포 시 안에 있음
 
 // Protected TP 타입 및 ID
